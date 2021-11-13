@@ -1,19 +1,16 @@
-// extern crate cgmath;
-extern crate mint;
-extern crate three;
-
 use std::usize;
 
-use rayon::prelude::*;
-
+mod particle;
 mod wave_simulation;
 
-use crate::wave_simulation::clampi;
-use crate::wave_simulation::WaterParticle;
+use mint::{Point2, Vector2};
+use three::{controls::Orbit, MouseButton, Window, KEY_ESCAPE, KEY_SPACE};
+
+use crate::{particle::ParticleType, wave_simulation::WaveSimulation};
 
 const WIDTH: i32 = 200;
 const HEIGHT: i32 = 200;
-const GRID_SCALE: f32 = 10.0;
+const GRID_SCALE: i32 = 10;
 const MOUSE_SIZE: i32 = 2;
 const MOUSE_HEIGHT: f32 = HEIGHT_LIMIT / 5.0;
 
@@ -23,85 +20,37 @@ const HEIGHT_LIMIT: f32 = 2.0;
 const DAMPING: f32 = 0.995;
 const SUSTAINABILITY: f32 = 100.0;
 
-fn make_mesh(particles: &[[WaterParticle; HEIGHT as usize]; WIDTH as usize]) -> three::Geometry {
-    let mut vertices = Vec::new();
-    let mut faces = Vec::new();
+const OSZILLATOR_SPEED: f32 = 0.2;
 
-    // vertices
-    for x in 0..WIDTH {
-        for y in 0..HEIGHT {
-            let pos = particles[x as usize][y as usize].pos;
-            vertices.push(pos);
-        }
-    }
+fn get_normalised_mouse_pos(mouse_pos: Point2<f32>, win_size: Vector2<f32>) -> (i32, i32) {
+    let mut mouse_x = WIDTH - (mouse_pos.x / win_size.x * WIDTH as f32) as i32;
+    mouse_x = mouse_x.max(MOUSE_SIZE).min(WIDTH - MOUSE_SIZE - 1);
+    let mut mouse_y = HEIGHT - (mouse_pos.y / win_size.y * HEIGHT as f32) as i32;
+    mouse_y = mouse_y.max(MOUSE_SIZE).min(HEIGHT - MOUSE_SIZE - 1);
 
-    // faces (indeces)
-    for x in 0..WIDTH {
-        for y in 0..HEIGHT {
-            if 0 < x && 0 < y {
-                let a = (x * HEIGHT + y) as u32;
-                let b = (x * HEIGHT + y - 1) as u32;
-                let c = ((x - 1) * HEIGHT + y) as u32;
-                let arr = [a, b, c];
-                faces.push(arr);
-            }
-
-            if x < WIDTH && y < HEIGHT - 1 {
-                let a = (x * HEIGHT + y) as u32;
-                let b = (x * HEIGHT + y + 1) as u32;
-                let c = ((x + 1) * HEIGHT + y) as u32;
-                let arr = [a, b, c];
-                faces.push(arr);
-            }
-        }
-    }
-
-    three::Geometry {
-        faces,
-        base: three::Shape {
-            vertices,
-            ..three::Shape::default()
-        },
-        ..three::Geometry::default()
-    }
+    (mouse_x, mouse_y)
 }
 
 fn main() {
-    let mut win = three::Window::new("Three-rs wave simulation");
+    let mut win = Window::new("Three-rs wave simulation");
     // win.set_fullscreen(true);
 
     let cam = win.factory.perspective_camera(60.0, 1.0..1000.0);
-    let mut controls = three::controls::Orbit::builder(&cam)
-        .position([0.0, -4.0, 10.0])
+    let mut controls = Orbit::builder(&cam)
+        .position([0.0, 4.0, -10.0])
         .target([0.0, 0.0, 0.0])
         .build();
 
-    let mut particles = [[WaterParticle::new(); HEIGHT as usize]; WIDTH as usize];
-    for x in 0..WIDTH {
-        for y in 0..HEIGHT {
-            let particle = &mut particles[x as usize][y as usize];
-            particle.pos = mint::Point3 {
-                x: (x as f32 - (WIDTH / 2) as f32) / WIDTH as f32 * GRID_SCALE,
-                y: 0.0,
-                z: (y as f32 - (HEIGHT / 2) as f32) / HEIGHT as f32 * GRID_SCALE,
-            };
-            particle.index_x = x as usize;
-            particle.index_y = y as usize;
-        }
-    }
+    let mut simulation = WaveSimulation::new(&mut win.factory);
 
+    // raise a few initial particles
     for x in (WIDTH / 2 - 1)..=(WIDTH / 2 + 1) {
         for y in (HEIGHT / 2 - 1)..=(HEIGHT / 2 + 1) {
-            particles[x as usize][y as usize].pos.y = HEIGHT_LIMIT;
+            simulation.particles[x as usize][y as usize].pos.y = HEIGHT_LIMIT;
         }
     }
 
-    let mut mesh = {
-        let geometry = make_mesh(&particles);
-        let material = three::material::Wireframe { color: 0x00FFFF };
-        win.factory.mesh_dynamic(geometry, material)
-    };
-    win.scene.add(&mesh);
+    win.scene.add(&simulation.mesh);
 
     let font = win.factory.load_font_karla();
     let mut ui_text = win.factory.ui_text(&font, "");
@@ -114,9 +63,9 @@ fn main() {
 
     let mut mode = Mode::Control;
 
-    while win.update() && !win.input.hit(three::KEY_ESCAPE) {
+    while win.update() && !win.input.hit(KEY_ESCAPE) {
         // set control or camera mode
-        if win.input.hit(three::KEY_SPACE) {
+        if win.input.hit(KEY_SPACE) {
             if mode == Mode::Camera {
                 mode = Mode::Control;
             } else {
@@ -124,72 +73,38 @@ fn main() {
             }
         }
 
-        // Update particles
-        let particles_old = particles.clone();
-
-        // for x in 1..(WIDTH - 1) {
-        //     for y in 1..(HEIGHT - 1) {
-        //         particles[x as usize][y as usize].update(&particles_old, &delta_time);
-        //     }
-        // }
-
-        particles
-            .par_iter_mut() // this runs in parallel
-            .enumerate()
-            .for_each(|(index, particle_slice)| {
-                if !(index == 0 || index == WIDTH as usize || index == (WIDTH - 1) as usize) {
-                    for i in 1..(HEIGHT - 1) {
-                        particle_slice[i as usize].update(&particles_old);
-                    }
-                }
-            });
-
-        // // recreate mesh
-        // win.scene.remove(mesh);
-        // mesh = {
-        //     let geometry = make_mesh(&particles);
-        //     let material = three::material::Wireframe { color: 0x00FFFF };
-        //     win.factory.mesh(geometry, material)
-        // };
-        // win.scene.add(&mesh);
-
-        // write particle heights to mesh
-        // new scope because of mutable win borrow for vmap
-        {
-            let mut vmap = win.factory.map_vertices(&mut mesh);
-            for x in 0..WIDTH {
-                for y in 0..HEIGHT {
-                    let pos = particles[x as usize][y as usize].pos;
-                    // println!("{}", pos.y);
-                    let index = x * WIDTH + y;
-                    vmap[index as usize].pos = [pos.x, pos.y, pos.z, 1.0];
-                }
-            }
-        }
+        // update simulation
+        simulation.update();
+        simulation.update_mesh(&mut win.factory);
 
         if mode == Mode::Camera {
             controls.update(&win.input);
         } else {
-            if win.input.hit(three::MouseButton::Left) {
-                let mouse_pos_ndc = win.input.mouse_pos();
-                let mut mouse_x = (mouse_pos_ndc.x / win.size().x * WIDTH as f32) as i32;
-                clampi(&mut mouse_x, MOUSE_SIZE + 1, WIDTH - MOUSE_SIZE - 2);
-                let mut mouse_y = (mouse_pos_ndc.y / win.size().y * HEIGHT as f32) as i32;
-                clampi(&mut mouse_y, MOUSE_SIZE + 1, HEIGHT - MOUSE_SIZE - 2);
+            if win.input.hit(MouseButton::Left) {
+                // raise particles
+                let (mouse_x, mouse_y) =
+                    get_normalised_mouse_pos(win.input.mouse_pos(), win.size());
 
                 // particles[mouse_x as usize][mouse_y as usize].pos.y = HEIGHT_LIMIT;
 
                 // set multiple particles
-
                 for x in (mouse_x - MOUSE_SIZE) as usize..=(mouse_x + MOUSE_SIZE) as usize {
                     for y in (mouse_y - MOUSE_SIZE) as usize..=(mouse_y + MOUSE_SIZE) as usize {
-                        particles[x][y].pos.y = MOUSE_HEIGHT;
+                        simulation.particles[x][y].pos.y = MOUSE_HEIGHT;
+                        // make sure they're a fluid
+                        simulation.particles[x][y].particle_type = ParticleType::Fluid;
                     }
                 }
+            } else if win.input.hit(MouseButton::Right) {
+                let (x, y) = get_normalised_mouse_pos(win.input.mouse_pos(), win.size());
+
+                // or make them oszillators
+                simulation.particles[x as usize][y as usize].particle_type =
+                    ParticleType::Oszillator(0.0);
             }
         }
 
-        let text = "FPS: ".to_string() + &(1.0 / win.input.delta_time()).ceil().to_string();
+        let text = "FPS: ".to_string() + &(1.0 / win.input.delta_time()).round().to_string();
         ui_text.set_text(text);
 
         win.render(&cam);
