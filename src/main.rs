@@ -4,9 +4,17 @@ mod particle;
 mod wave_simulation;
 
 use mint::{Point2, Vector2};
-use three::{controls::Orbit, MouseButton, Window, KEY_ESCAPE, KEY_SPACE};
+use three::{controls::Orbit, Key::B, Key::R, MouseButton, Window, KEY_ESCAPE, KEY_SPACE};
 
 use crate::{particle::ParticleType, wave_simulation::WaveSimulation};
+
+const HELP_TEXT: &str = r"Controls:
+LEFT MOUSE / MOUSE WHEEL - move camera
+LEFT MOUSE - draw on the fluid mesh
+RIGHT MOUSE - set a fluid particle as an oszillator
+SPACE - switch between camera and mouse mode
+B - switch between reflective and infinite borders
+R - reset all oszillators to fluid";
 
 const WIDTH: i32 = 200;
 const HEIGHT: i32 = 200;
@@ -62,6 +70,7 @@ fn main() {
     }
 
     let mut mode = Mode::Control;
+    let mut border_type = ParticleType::Fluid;
 
     while win.update() && !win.input.hit(KEY_ESCAPE) {
         // set control or camera mode
@@ -70,6 +79,27 @@ fn main() {
                 mode = Mode::Control;
             } else {
                 mode = Mode::Camera;
+            }
+        }
+
+        // set borders
+        if win.input.hit(B) {
+            if border_type == ParticleType::Fluid {
+                border_type = ParticleType::Infinity;
+            } else {
+                border_type = ParticleType::Fluid
+            }
+
+            simulation.set_borders(border_type);
+        }
+
+        // reset oszillators
+        if win.input.hit(R) {
+            for x in 1..(WIDTH - 1) {
+                for y in 1..(HEIGHT - 1) {
+                    simulation.particles[x as usize][y as usize].particle_type =
+                        ParticleType::Fluid;
+                }
             }
         }
 
@@ -104,7 +134,10 @@ fn main() {
             }
         }
 
-        let text = "FPS: ".to_string() + &(1.0 / win.input.delta_time()).round().to_string();
+        let text = "FPS: ".to_string()
+            + &(1.0 / win.input.delta_time()).round().to_string()
+            + "\n"
+            + HELP_TEXT;
         ui_text.set_text(text);
 
         win.render(&cam);

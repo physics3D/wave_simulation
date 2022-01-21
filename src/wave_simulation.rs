@@ -27,11 +27,6 @@ impl WaveSimulation {
 
                 particle.index_x = x as usize;
                 particle.index_y = y as usize;
-
-                // make infinite borders
-                if x == 0 || x == WIDTH - 1 || y == 0 || y == HEIGHT - 1 {
-                    particle.particle_type = ParticleType::Infinity;
-                }
             }
         }
 
@@ -125,6 +120,16 @@ impl WaveSimulation {
                 // println!("{}", pos.y);
                 let index = x * WIDTH + y;
                 vmap[index as usize].pos = [pos.x, pos.y, pos.z, 1.0];
+            }
+        }
+    }
+
+    pub fn set_borders(&mut self, border_type: ParticleType) {
+        for x in 0..WIDTH {
+            for y in 0..HEIGHT {
+                if x == 0 || x == WIDTH - 1 || y == 0 || y == HEIGHT - 1 {
+                    self.particles[x as usize][y as usize].particle_type = border_type;
+                }
             }
         }
     }
